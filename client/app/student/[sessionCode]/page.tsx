@@ -39,6 +39,8 @@ function StudentPresentationContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawQueue = useRef<{x:number, y:number}[]>([]);
+  const isDrawingFrame = useRef(false);
 
   // Classroom States
   const [isHandRaised, setIsHandRaised] = useState(false);
@@ -140,9 +142,6 @@ function StudentPresentationContent() {
       ctx.lineWidth = size;
       ctx.globalCompositeOperation = color === 'ERASER' ? 'destination-out' : 'source-over';
     });
-
-    const drawQueue = useRef<{x:number, y:number}[]>([]);
-    const isDrawingFrame = useRef(false);
 
     socket.on("draw-progress", ({ slideNumber, points }) => {
       if (!points || points.length === 0) return;
