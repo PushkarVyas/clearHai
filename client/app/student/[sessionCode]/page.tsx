@@ -141,12 +141,26 @@ function StudentPresentationContent() {
       ctx.globalCompositeOperation = color === 'ERASER' ? 'destination-out' : 'source-over';
     });
 
+    const drawQueue = useRef<{x:number, y:number}[]>([]);
+    const isDrawingFrame = useRef(false);
+
     socket.on("draw-progress", ({ slideNumber, points }) => {
-      const ctx = canvasRef.current?.getContext('2d');
-      if (!ctx || !points || points.length === 0) return;
-      for (const p of points) {
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
+      if (!points || points.length === 0) return;
+      drawQueue.current.push(...points);
+      
+      if (!isDrawingFrame.current) {
+        isDrawingFrame.current = true;
+        requestAnimationFrame(() => {
+          const ctx = canvasRef.current?.getContext('2d');
+          if (ctx && drawQueue.current.length > 0) {
+            for (const p of drawQueue.current) {
+              ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+            drawQueue.current = [];
+          }
+          isDrawingFrame.current = false;
+        });
       }
     });
 
@@ -399,7 +413,7 @@ function StudentPresentationContent() {
                      {chat.length === 0 ? (
                        <p className="text-center text-sm font-medium text-slate-500 py-10 italic">No messages yet.</p>
                      ) : (
-                       chat.map(m => (
+                       chat.slice(-30).map(m => (
                          <div key={m.id} className="flex flex-col gap-1 items-start">
                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{m.name}</span>
                            <div className={`text-sm py-2 px-3.5 rounded-3xl font-semibold border ${m.name === userName ? 'bg-indigo-600 text-white border-indigo-500/50 rounded-tl-sm' : m.name === 'Teacher' ? 'bg-white text-black border-transparent' : 'bg-white/10 text-white border-white/5 rounded-tr-sm'}`}>

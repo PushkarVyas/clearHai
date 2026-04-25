@@ -316,7 +316,10 @@ export default function PresentationTeacher() {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+    return { 
+      x: Math.round(((e.clientX - rect.left) * scaleX) * 10) / 10, 
+      y: Math.round(((e.clientY - rect.top) * scaleY) * 10) / 10 
+    };
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -349,7 +352,7 @@ export default function PresentationTeacher() {
     if (ctx) { ctx.lineTo(point.x, point.y); ctx.stroke(); }
 
     const now = Date.now();
-    if (now - lastEmitTime.current >= 24) { 
+    if (now - lastEmitTime.current >= 50) { 
       socket.emit('draw-progress', { sessionCode, slideNumber: slide, points: pendingEmitPoints.current });
       pendingEmitPoints.current = [];
       lastEmitTime.current = now;
@@ -654,7 +657,7 @@ export default function PresentationTeacher() {
                 {chat.length === 0 ? (
                   <p className="text-sm font-medium text-slate-500 italic text-center py-4">No messages yet.</p>
                 ) : (
-                  chat.map(m => (
+                  chat.slice(-30).map(m => (
                     <div key={m.id} className="flex flex-col gap-1 items-start">
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{m.name}</span>
                       <div className={`text-sm py-2.5 px-3.5 rounded-3xl font-semibold border ${m.name === "Teacher" ? 'bg-indigo-600 border-indigo-500/50 rounded-tl-sm text-white' : 'bg-white/10 border-white/5 text-slate-200 rounded-tr-sm'}`}>

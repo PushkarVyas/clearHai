@@ -43,9 +43,10 @@ const upload = multer({
 const sessions = {};
 const socketToSession = {};
 
-// Per-socket rate limiters: { socketId: { chat: lastTs, reaction: lastTs } }
+// Per-socket rate limiters: { socketId: { chat: lastTs, vote: lastTs } }
 const rateLimits = {};
-const RATE_LIMIT_CHAT_MS = 500;
+const RATE_LIMIT_CHAT_MS = 1000;
+const RATE_LIMIT_VOTE_MS = 500;
 
 // ── HELPERS ─────────────────────────────────────────────────────────────────
 const generateSessionCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -93,12 +94,30 @@ app.post('/api/session/create', upload.single('file'), (req, res) => {
     bookmarks: [],
     raisedHands: [],
     isPaused: false,
+    pollDirty: false,
     createdAt: Date.now(),
     lastActivity: Date.now(),
   };
 
   res.json({ success: true, sessionCode });
 });
+
+// ── POLL BATCH BROADCASTER (every 300ms) ────────────────────────────────────
+setInterval(() => {
+  for (const code of Object.keys(sessions)) {
+    const s = sessions[code];
+    if (s.pollDirty) {
+      s.pollDirty = false;
+      const stats = s.responses[s.currentSlide];
+      io.to(code).emit('stats-updated', { slideNumber: s.currentSlide, responses: stats });
+      
+      const total = stats.understood + stats.not_understood;
+      if (total > 0 && ((stats.not_understood / total) * 100) > 60) {
+        io.to(code).emit('auto-alert', { slideNumber: s.currentSlide, message: 'High confusion on this slide' });
+      }
+    }
+  }
+}, 300);
 
 // ── SESSION GARBAGE COLLECTOR (every 10 min) ────────────────────────────────
 setInterval(() => {
@@ -134,7 +153,7 @@ io.on('connection', (socket) => {
     socketToSession[socket.id] = sessionCode;
     sessions[sessionCode].users[socket.id] = { name };
     sessions[sessionCode].lastActivity = Date.now();
-    rateLimits[socket.id] = { chat: 0 };
+    rateLimits[socket.id] = { chat: 0, vote: 0 };
 
     io.to(sessionCode).emit('user-count-update', Object.keys(sessions[sessionCode].users).length);
 
@@ -147,7 +166,7 @@ io.on('connection', (socket) => {
         isWhiteboardMode: session.isWhiteboardMode,
         drawings: session.drawings[session.currentSlide] || [],
         doubts: session.doubts,
-        chat: session.chat.slice(-50), // Send last 50 messages only
+        chat: session.chat.slice(-30), // Send last 30 messages only
         hasPdf: session.hasPdf,
         isPaused: session.isPaused,
         bookmarks: session.bookmarks,
@@ -166,6 +185,8 @@ io.on('connection', (socket) => {
     if (!session.responses[nextSlide]) {
       session.responses[nextSlide] = { understood: 0, not_understood: 0 };
     }
+    // Aggressively free memory of drawings on previous slide
+    session.drawings = {};
 
     io.to(sessionCode).emit('slide-changed', {
       currentSlide: session.currentSlide,
@@ -196,6 +217,15 @@ io.on('connection', (socket) => {
 
     if (!session.userResponses[socket.id]) session.userResponses[socket.id] = {};
     const prev = session.userResponses[socket.id][slideNumber];
+    
+    const now = Date.now();
+    const rl = rateLimits[socket.id];
+    if (rl && (now - rl.vote) < RATE_LIMIT_VOTE_MS && prev !== feedback) {
+       // Allow change but respect rate limit
+       return;
+    }
+    if (rl) rl.vote = now;
+
     if (prev === feedback) {
       if (typeof callback === 'function') callback({ success: true });
       return;
@@ -205,14 +235,8 @@ io.on('connection', (socket) => {
 
     session.responses[slideNumber][feedback]++;
     session.userResponses[socket.id][slideNumber] = feedback;
-    const stats = session.responses[slideNumber];
-
-    io.to(sessionCode).emit('stats-updated', { slideNumber, responses: stats });
-
-    const total = stats.understood + stats.not_understood;
-    if (total > 0 && ((stats.not_understood / total) * 100) > 60) {
-      io.to(sessionCode).emit('auto-alert', { slideNumber, message: 'High confusion on this slide' });
-    }
+    
+    session.pollDirty = true;
     if (typeof callback === 'function') callback({ success: true });
   });
 
@@ -231,6 +255,9 @@ io.on('connection', (socket) => {
     if (session) {
       if (!session.drawings[slideNumber]) session.drawings[slideNumber] = [];
       session.drawings[slideNumber].push(stroke);
+      if (session.drawings[slideNumber].length > 300) {
+        session.drawings[slideNumber].shift();
+      }
     }
     socket.to(sessionCode).emit('end-draw', { slideNumber, stroke });
   });
@@ -269,14 +296,14 @@ io.on('connection', (socket) => {
     if (rl && (now - rl.chat) < RATE_LIMIT_CHAT_MS) return;
     if (rl) rl.chat = now;
 
-    text = sanitize(text, 300);
+    text = sanitize(text, 200);
     name = sanitize(name, 30);
     if (!text) return;
 
     const msg = { id: Math.random().toString(), name, text, timestamp: now };
     session.chat.push(msg);
-    // Cap stored chat to 200 messages
-    if (session.chat.length > 200) session.chat = session.chat.slice(-200);
+    // Cap stored chat to 30 messages
+    if (session.chat.length > 30) session.chat = session.chat.slice(-30);
     io.to(sessionCode).emit('receive-message', msg);
   });
 
